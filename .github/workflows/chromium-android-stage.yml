@@ -59,6 +59,9 @@ jobs:
       - name: Move temp and caches to build volume
         run: |
           mkdir -p "$GITHUB_WORKSPACE/.tmp" "$GITHUB_WORKSPACE/.cache"
+          # 有些工具（例如 vpython 底下的 uv）不理 TMPDIR，直接把 /tmp 掛到大卷
+          sudo chmod 1777 "$GITHUB_WORKSPACE/.tmp"
+          sudo mount --bind "$GITHUB_WORKSPACE/.tmp" /tmp
           {
             echo "TMPDIR=$GITHUB_WORKSPACE/.tmp"
             echo "XDG_CACHE_HOME=$GITHUB_WORKSPACE/.cache"
@@ -236,6 +239,13 @@ jobs:
         run: |
           echo "最後一個 stage 也沒編完，請在 build-android.yml 多加幾個 stage"
           exit 1
+
+      - name: Disk usage on failure
+        if: failure()
+        run: |
+          df -h
+          sudo du -xh -d 2 / 2>/dev/null | sort -h | tail -25 || true
+          du -sh "$GITHUB_WORKSPACE"/* "$GITHUB_WORKSPACE"/.[a-z]* 2>/dev/null | sort -h || true
 
       # ---------- 編完：上傳 APK ----------
 
