@@ -1,0 +1,235 @@
+name: Chromium Android stage
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        type: number
+        required: true
+      last_stage:
+        type: boolean
+        default: false
+      version:
+        type: string
+        required: true
+      target_cpu:
+        type: string
+        required: true
+    outputs:
+      done:
+        value: ${{ jobs.build.outputs.done }}
+
+jobs:
+  build:
+    name: stage ${{ inputs.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    outputs:
+      done: ${{ steps.build.outputs.done }}
+
+    env:
+      STAGE: ${{ inputs.stage }}
+      VERSION: ${{ inputs.version }}
+      TARGET_CPU: ${{ inputs.target_cpu }}
+      # job 開始後第幾分鐘一定要停 ninja（6 小時上限，扣掉打包、上傳的時間）
+      NINJA_DEADLINE_MIN: 320
+
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # 把根目錄剩餘空間和 /mnt 合併成一個約 100GB 的卷，掛在 workspace
+      - name: Maximize disk space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 10240
+          swap-size-mb: 10240
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Show disk
+        run: df -h
+
+      # ---------- stage 1：抓原始碼 ----------
+
+      - name: Get depot_tools
+        if: inputs.stage == 1
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$GITHUB_WORKSPACE/depot_tools"
+          echo "$GITHUB_WORKSPACE/depot_tools" >> "$GITHUB_PATH"
+
+      - name: Fetch chromium/src at tag
+        if: inputs.stage == 1
+        run: |
+          git init src
+          cd src
+          git remote add origin https://chromium.googlesource.com/chromium/src.git
+          git fetch --depth 1 origin "refs/tags/$VERSION"
+          git checkout --quiet FETCH_HEAD
+          git log -1 --format='%H %cd %s'
+
+      - name: Install build deps
+        if: inputs.stage == 1
+        run: sudo src/build/install-build-deps.sh --android --no-prompt --no-chromeos-fonts --no-syms --no-arm --no-nacl
+
+      # src 已經手動 checkout 到指定 tag，設成 unmanaged 讓 gclient 只同步 DEPS
+      - name: gclient sync
+        if: inputs.stage == 1
+        run: |
+          cat > .gclient <<'GCLIENT'
+          solutions = [{
+            "name": "src",
+            "url": "https://chromium.googlesource.com/chromium/src.git",
+            "managed": False,
+            "custom_deps": {},
+            "custom_vars": {},
+          }]
+          target_os = ["android"]
+          GCLIENT
+          gclient sync --no-history -j 8
+          du -sh src
+
+      - name: gn gen
+        if: inputs.stage == 1
+        run: |
+          mkdir -p src/out/Default
+          cat > src/out/Default/args.gn <<ARGS
+          target_os = "android"
+          target_cpu = "$TARGET_CPU"
+          is_debug = false
+          is_component_build = false
+          symbol_level = 0
+          blink_symbol_level = 0
+          v8_symbol_level = 0
+          treat_warnings_as_errors = false
+          android_static_analysis = "off"
+          use_siso = false
+          ARGS
+          cat src/out/Default/args.gn
+          cd src && buildtools/linux64/gn gen out/Default
+
+      # 原始碼只打包一次，後面每個 stage 都從這裡還原（tar 會保留時間戳，ninja 才不會全部重編）
+      - name: Pack source
+        if: inputs.stage == 1
+        run: |
+          mkdir -p pkg
+          tar -cf - .gclient src | zstd -T0 -3 | split -b 1900M -d - pkg/src.tar.zst.
+          ls -lh pkg
+          df -h .
+
+      - name: Upload source
+        if: inputs.stage == 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-src
+          path: pkg/
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Clean pack dir
+        if: inputs.stage == 1
+        run: rm -rf pkg
+
+      # ---------- stage 2+：還原上一棒的進度 ----------
+
+      - name: Download source
+        if: inputs.stage > 1
+        uses: actions/download-artifact@v4
+        with:
+          name: chromium-src
+          path: pkg-src
+
+      - name: Previous stage number
+        id: prev
+        if: inputs.stage > 1
+        run: echo "n=$(( STAGE - 1 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Download previous out/
+        if: inputs.stage > 1
+        uses: actions/download-artifact@v4
+        with:
+          name: chromium-out-${{ steps.prev.outputs.n }}
+          path: pkg-out
+
+      - name: Restore
+        if: inputs.stage > 1
+        run: |
+          cat pkg-src/src.tar.zst.* | zstd -d -T0 | tar -xf -
+          rm -rf pkg-src
+          cat pkg-out/out.tar.zst.* | zstd -d -T0 | tar -xf -
+          rm -rf pkg-out
+          df -h .
+
+      - name: Install build deps
+        if: inputs.stage > 1
+        run: sudo src/build/install-build-deps.sh --android --no-prompt --no-chromeos-fonts --no-syms --no-arm --no-nacl
+
+      # ---------- 編譯 ----------
+
+      - name: Build chrome_public_apk
+        id: build
+        run: |
+          now=$(date +%s)
+          remaining=$(( JOB_START + NINJA_DEADLINE_MIN * 60 - now ))
+          echo "ninja 可用時間: $(( remaining / 60 )) 分鐘"
+          if [ "$remaining" -lt 600 ]; then
+            echo "時間不夠，直接交給下一棒"
+            echo "done=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          timeout -s INT -k 180 "$remaining" \
+            src/third_party/ninja/ninja -C src/out/Default -j 4 chrome_public_apk
+          rc=$?
+          set -e
+          case $rc in
+            0)       echo "done=true"  >> "$GITHUB_OUTPUT" ;;
+            124|137) echo "時間到，交給下一棒"; echo "done=false" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "ninja 失敗 (exit $rc)"; exit $rc ;;
+          esac
+
+      # ---------- 沒編完：打包 out/ 給下一棒 ----------
+
+      - name: Pack out/
+        if: steps.build.outputs.done != 'true'
+        run: |
+          mkdir -p pkg
+          tar -cf - src/out | zstd -T0 -1 | split -b 1900M -d - pkg/out.tar.zst.
+          ls -lh pkg
+
+      - name: Upload out/
+        if: steps.build.outputs.done != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-out-${{ inputs.stage }}
+          path: pkg/
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Fail if last stage did not finish
+        if: steps.build.outputs.done != 'true' && inputs.last_stage
+        run: |
+          echo "最後一個 stage 也沒編完，請在 build-android.yml 多加幾個 stage"
+          exit 1
+
+      # ---------- 編完：上傳 APK ----------
+
+      - name: List APKs
+        if: steps.build.outputs.done == 'true'
+        run: ls -lh src/out/Default/apks/
+
+      - name: Upload APK
+        if: steps.build.outputs.done == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-android-${{ inputs.target_cpu }}-${{ inputs.version }}
+          path: src/out/Default/apks/*.apk
+          if-no-files-found: error
