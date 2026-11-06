@@ -15,6 +15,9 @@ on:
       target_cpu:
         type: string
         required: true
+      package_name:
+        type: string
+        required: true
     outputs:
       done:
         value: ${{ jobs.build.outputs.done }}
@@ -32,6 +35,7 @@ jobs:
       STAGE: ${{ inputs.stage }}
       VERSION: ${{ inputs.version }}
       TARGET_CPU: ${{ inputs.target_cpu }}
+      PACKAGE_NAME: ${{ inputs.package_name }}
       # job 開始後第幾分鐘一定要停 ninja（6 小時上限，扣掉打包、上傳的時間）
       NINJA_DEADLINE_MIN: 320
 
@@ -108,6 +112,7 @@ jobs:
           treat_warnings_as_errors = false
           android_static_analysis = "off"
           use_siso = false
+          chrome_public_manifest_package = "$PACKAGE_NAME"
           ARGS
           cat src/out/Default/args.gn
           cd src && buildtools/linux64/gn gen out/Default

@@ -22,6 +22,11 @@ on:
           - arm64   # 一般手機
           - arm     # 舊款 32 位元手機
           - x64     # 模擬器
+      package_name:
+        description: "APK 包名（改掉就能和其他 Chromium 同時安裝）"
+        required: true
+        default: "org.chromium.chrome"
+        type: string
 
 jobs:
   resolve:
@@ -32,6 +37,7 @@ jobs:
       - id: v
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
         run: |
           v="$INPUT_VERSION"
           if [ -z "$v" ]; then
@@ -40,7 +46,10 @@ jobs:
           if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "版本格式不對: '$v'"; exit 1
           fi
-          echo "Chromium $v"
+          if ! [[ "$PACKAGE_NAME" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]]; then
+            echo "包名格式不對: '$PACKAGE_NAME'"; exit 1
+          fi
+          echo "Chromium $v ($PACKAGE_NAME)"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   stage1:
@@ -50,6 +59,7 @@ jobs:
       stage: 1
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
+      package_name: ${{ inputs.package_name }}
 
   stage2:
     needs: [resolve, stage1]
@@ -59,6 +69,7 @@ jobs:
       stage: 2
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
+      package_name: ${{ inputs.package_name }}
 
   stage3:
     needs: [resolve, stage2]
@@ -68,6 +79,7 @@ jobs:
       stage: 3
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
+      package_name: ${{ inputs.package_name }}
 
   stage4:
     needs: [resolve, stage3]
@@ -77,6 +89,7 @@ jobs:
       stage: 4
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
+      package_name: ${{ inputs.package_name }}
 
   stage5:
     needs: [resolve, stage4]
@@ -86,6 +99,7 @@ jobs:
       stage: 5
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
+      package_name: ${{ inputs.package_name }}
 
   stage6:
     needs: [resolve, stage5]
@@ -96,3 +110,4 @@ jobs:
       last_stage: true
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
+      package_name: ${{ inputs.package_name }}

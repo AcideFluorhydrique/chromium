@@ -1,0 +1,24 @@
+name: Sync main with upstream
+
+# 每兩天把 fork 的 main 強制對齊上游（main 只當上游的鏡像，不放自己的 commit）。
+# 如果上游改了 .github/workflows 裡的檔案，預設的 GITHUB_TOKEN 沒有權限更新，
+# 這時要建一個有 Contents + Workflows 寫入權限的 fine-grained token，存成 secret SYNC_TOKEN。
+
+on:
+  schedule:
+    - cron: "43 4 */2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync main
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+        run: |
+          gh repo sync "$GITHUB_REPOSITORY" --branch main --force
+          gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha[0:12] + " " + (.commit.message | split("\n")[0])'
