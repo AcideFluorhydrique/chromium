@@ -47,13 +47,25 @@ jobs:
       - name: Maximize disk space
         uses: easimon/maximize-build-space@v10
         with:
-          root-reserve-mb: 10240
-          swap-size-mb: 10240
+          root-reserve-mb: 20480
+          swap-size-mb: 4096
           remove-dotnet: "true"
           remove-android: "true"
           remove-haskell: "true"
           remove-codeql: "true"
           remove-docker-images: "true"
+
+      # 根目錄只剩約 20GB，暫存檔和 vpython / CIPD / uv 快取全部改放到大卷上
+      - name: Move temp and caches to build volume
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.tmp" "$GITHUB_WORKSPACE/.cache"
+          {
+            echo "TMPDIR=$GITHUB_WORKSPACE/.tmp"
+            echo "XDG_CACHE_HOME=$GITHUB_WORKSPACE/.cache"
+            echo "VPYTHON_VIRTUALENV_ROOT=$GITHUB_WORKSPACE/.cache/vpython-root"
+            echo "UV_CACHE_DIR=$GITHUB_WORKSPACE/.cache/uv"
+            echo "CIPD_CACHE_DIR=$GITHUB_WORKSPACE/.cache/cipd"
+          } >> "$GITHUB_ENV"
 
       - name: Show disk
         run: df -h
