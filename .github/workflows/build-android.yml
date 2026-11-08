@@ -27,6 +27,18 @@ on:
         required: true
         default: "org.chromium.chrome"
         type: string
+  # 讓 release-chromium.yml 可以直接呼叫
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: ""
+      target_cpu:
+        type: string
+        default: "arm64"
+      package_name:
+        type: string
+        default: "org.chromium.chrome"
 
 jobs:
   resolve:
