@@ -7,3 +7,13 @@
 編完的那一棒上傳 APK。
 
 用法：把這個分支設成 repo 的預設分支（workflow_dispatch 只會讀預設分支上的 workflow）。
+
+
+<p>
+  <a href="https://github.com/AcideFluorhydrique/chromium/releases">
+    <img src="https://raw.githubusercontent.com/mmlado/GapSign/main/assets/badges/badge_github.png" alt="Get it on GitHub" height="70" />
+  </a>
+  <a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/AcideFluorhydrique/chromium/releases">
+    <img src="https://raw.githubusercontent.com/mmlado/GapSign/main/assets/badges/badge_obtainium.png" alt="Get it on Obtainium" height="70" />
+  </a>
+</p>
