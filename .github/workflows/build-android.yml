@@ -27,6 +27,11 @@ on:
         required: true
         default: "org.chromium.chrome"
         type: string
+      official:
+        description: "官方等級最佳化（is_official_build，照 uazo Vanilla 的設定；實驗中）"
+        required: false
+        default: false
+        type: boolean
   # 讓 release-chromium.yml 可以直接呼叫
   workflow_call:
     inputs:
@@ -39,6 +44,9 @@ on:
       package_name:
         type: string
         default: "org.chromium.chrome"
+      official:
+        type: boolean
+        default: false
 
 jobs:
   resolve:
@@ -72,6 +80,7 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
+      official: ${{ inputs.official || false }}
 
   stage2:
     needs: [resolve, stage1]
@@ -82,6 +91,7 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
+      official: ${{ inputs.official || false }}
 
   stage3:
     needs: [resolve, stage2]
@@ -92,6 +102,7 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
+      official: ${{ inputs.official || false }}
 
   stage4:
     needs: [resolve, stage3]
@@ -102,6 +113,7 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
+      official: ${{ inputs.official || false }}
 
   stage5:
     needs: [resolve, stage4]
@@ -112,6 +124,7 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
+      official: ${{ inputs.official || false }}
 
   stage6:
     needs: [resolve, stage5]
@@ -123,3 +136,4 @@ jobs:
       version: ${{ needs.resolve.outputs.version }}
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
+      official: ${{ inputs.official || false }}

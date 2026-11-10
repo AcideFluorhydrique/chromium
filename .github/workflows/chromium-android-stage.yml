@@ -18,6 +18,9 @@ on:
       package_name:
         type: string
         required: true
+      official:
+        type: boolean
+        default: false
     outputs:
       done:
         value: ${{ jobs.build.outputs.done }}
@@ -36,6 +39,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       TARGET_CPU: ${{ inputs.target_cpu }}
       PACKAGE_NAME: ${{ inputs.package_name }}
+      OFFICIAL: ${{ inputs.official }}
       # job 開始後第幾分鐘一定要停 ninja（6 小時上限，扣掉打包、上傳的時間）
       NINJA_DEADLINE_MIN: 320
 
@@ -70,6 +74,16 @@ jobs:
             echo "CIPD_CACHE_DIR=$GITHUB_WORKSPACE/.cache/cipd"
           } >> "$GITHUB_ENV"
 
+      # 官方編譯的 ThinLTO 連結 libchrome.so 約需 20GB 記憶體，runner 只有 16GB，在大卷上補一個 16GB swap
+      - name: Extra swap for ThinLTO link
+        if: inputs.official
+        run: |
+          sudo fallocate -l 16G "$GITHUB_WORKSPACE/.swapfile"
+          sudo chmod 600 "$GITHUB_WORKSPACE/.swapfile"
+          sudo mkswap "$GITHUB_WORKSPACE/.swapfile"
+          sudo swapon "$GITHUB_WORKSPACE/.swapfile"
+          free -h
+
       - name: Show disk
         run: df -h
 
@@ -99,13 +113,15 @@ jobs:
       - name: gclient sync
         if: inputs.stage == 1
         run: |
-          cat > .gclient <<'GCLIENT'
+          PGO=False
+          [ "$OFFICIAL" = "true" ] && PGO=True
+          cat > .gclient <<GCLIENT
           solutions = [{
             "name": "src",
             "url": "https://chromium.googlesource.com/chromium/src.git",
             "managed": False,
             "custom_deps": {},
-            "custom_vars": {},
+            "custom_vars": {"checkout_pgo_profiles": $PGO},
           }]
           target_os = ["android"]
           GCLIENT
@@ -129,6 +145,13 @@ jobs:
           use_siso = false
           chrome_public_manifest_package = "$PACKAGE_NAME"
           ARGS
+          # 照 uazo/cromite 的 build/chromium.gn_args（Vanilla Chromium）
+          if [ "$OFFICIAL" = "true" ]; then
+            cat >> src/out/Default/args.gn <<ARGS
+          is_official_build = true
+          include_both_v8_snapshots = false
+          ARGS
+          fi
           cat src/out/Default/args.gn
           cd src && buildtools/linux64/gn gen out/Default
 
