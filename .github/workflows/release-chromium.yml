@@ -64,6 +64,8 @@ jobs:
       version: ${{ needs.check.outputs.version }}
       target_cpu: arm64
       package_name: org.chromium.chrome
+      # is_official_build：APK 約 295MB（非 official 約 513MB），一樣三棒約 12 小時
+      official: true
 
   publish:
     needs: [check, build]

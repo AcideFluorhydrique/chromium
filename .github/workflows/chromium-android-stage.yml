@@ -51,8 +51,29 @@ jobs:
       - name: Record start time
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      # 把根目錄剩餘空間和 /mnt 合併成一個約 100GB 的卷，掛在 workspace
+      # 舊版 runner 映像：根目錄和 /mnt 是兩顆碟，要用 maximize-build-space 合併成一個約 100GB 的卷。
+      # 新版映像：只有一顆 145GB 的碟，/mnt 只是根目錄底下的資料夾。這時 maximize-build-space
+      # 會把同一顆碟算兩次，根目錄被吃到只剩 100MB、apt 寫不進去，所以改成直接清根目錄。
+      - name: Check disk layout
+        id: disk
+        run: |
+          df -h / /mnt
+          if [ "$(stat -c %d /)" != "$(stat -c %d /mnt)" ]; then sep=true; else sep=false; fi
+          echo "/mnt 是獨立的碟: $sep"
+          echo "separate_mnt=$sep" >> "$GITHUB_OUTPUT"
+
+      - name: Free disk space
+        if: steps.disk.outputs.separate_mnt != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af > /dev/null || true
+          df -h /
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          [ "$avail" -ge 90 ] || echo "::warning::根目錄只剩 ${avail}GB，可能不夠"
+
       - name: Maximize disk space
+        if: steps.disk.outputs.separate_mnt == 'true'
         uses: easimon/maximize-build-space@v10
         with:
           root-reserve-mb: 20480
@@ -63,7 +84,7 @@ jobs:
           remove-codeql: "true"
           remove-docker-images: "true"
 
-      # 根目錄只剩約 20GB，暫存檔和 vpython / CIPD / uv 快取全部改放到大卷上
+      # 用 maximize-build-space 時根目錄只剩約 20GB，暫存檔和 vpython / CIPD / uv 快取全部改放到 workspace
       - name: Move temp and caches to build volume
         run: |
           mkdir -p "$GITHUB_WORKSPACE/.tmp" "$GITHUB_WORKSPACE/.cache"
