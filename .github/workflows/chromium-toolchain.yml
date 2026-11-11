@@ -21,24 +21,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - name: Maximize disk space
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 20480
-          swap-size-mb: 4096
-          remove-dotnet: "true"
-          # 要用 runner 上用 sdkmanager 裝好的 NDK 編 Android 的 compiler-rt
-          remove-android: "false"
-          remove-haskell: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
-
-      - name: Move temp to build volume
+      # 新版 runner 映像的 /mnt 和根目錄在同一顆碟上，maximize-build-space 會把根目錄吃到只剩 100MB，
+      # apt 就寫不進去了。根目錄本身有 86GB，清掉用不到的東西就夠
+      - name: Free disk space
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/.tmp"
-          sudo chmod 1777 "$GITHUB_WORKSPACE/.tmp"
-          sudo mount --bind "$GITHUB_WORKSPACE/.tmp" /tmp
-
+          # 留著 /usr/local/lib/android，要用 runner 上用 sdkmanager 裝好的 NDK 編 Android 的 compiler-rt
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af > /dev/null || true
+          df -h /
       - name: Host compiler
         run: |
           sudo apt-get update -q
@@ -108,23 +98,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - name: Maximize disk space
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 20480
-          swap-size-mb: 4096
-          remove-dotnet: "true"
-          remove-android: "true"
-          remove-haskell: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
-
-      - name: Move temp to build volume
+      # 新版 runner 映像的 /mnt 和根目錄在同一顆碟上，maximize-build-space 會把根目錄吃到只剩 100MB，
+      # apt 就寫不進去了。根目錄本身有 86GB，清掉用不到的東西就夠
+      - name: Free disk space
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/.tmp"
-          sudo chmod 1777 "$GITHUB_WORKSPACE/.tmp"
-          sudo mount --bind "$GITHUB_WORKSPACE/.tmp" /tmp
-
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/lib/android
+          sudo docker image prune -af > /dev/null || true
+          df -h /
       - name: Host compiler
         run: |
           sudo apt-get update -q
@@ -211,7 +191,8 @@ jobs:
           git clone -q https://gn.googlesource.com/gn gn-src
           cd gn-src
           git checkout -q "$GN_REV"
-          CC="$HOST_CC" CXX="$HOST_CXX" AR=llvm-ar python3 build/gen.py
+          # gn 用到 C++23 的 std::expected，clang-18 配 Ubuntu 的 libstdc++ 用不了，改用 gcc-13
+          CC=gcc CXX=g++ AR=ar python3 build/gen.py
           "$GITHUB_WORKSPACE/out/third_party/ninja/ninja" -C out gn
           out/gn --version
           install -D -m755 out/gn "$GITHUB_WORKSPACE/out/buildtools/linux64/gn"
