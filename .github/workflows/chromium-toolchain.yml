@@ -163,6 +163,22 @@ jobs:
       - name: Patch build scripts to refuse prebuilt downloads
         run: python3 ci/.github/scripts/patch_toolchain_scripts.py src --rust
 
+      # cargo 裡的 curl 要 OpenSSL 3，build_rust.py 原本從 CIPD 下載的是預編譯的 1.1.1，
+      # 改成對同一個 Debian sysroot 從原始碼編 OpenSSL 3
+      - name: Build OpenSSL
+        run: |
+          sr=$(cd src/tools/clang/scripts && python3 -c "from build import DownloadDebianSysroot; print(DownloadDebianSysroot('amd64'))")
+          echo "sysroot: $sr"
+          git clone -q --depth 1 -b openssl-3.5.0 https://github.com/openssl/openssl.git openssl-src
+          cd openssl-src
+          ./Configure linux-x86_64 no-shared no-tests no-docs \
+            --prefix="$GITHUB_WORKSPACE/openssl" --libdir=lib \
+            CC="$HOST_CC" CFLAGS="--sysroot=$sr -O2 -fPIC" LDFLAGS="--sysroot=$sr"
+          make -j"$(nproc)" > /dev/null
+          make install_sw > /dev/null
+          ls "$GITHUB_WORKSPACE/openssl/lib"
+          echo "OWN_OPENSSL_DIR=$GITHUB_WORKSPACE/openssl" >> "$GITHUB_ENV"
+
       # 照 tools/rust/package_rust.py 的做法，但不編 crubit（Android 版用不到）、不跑測試
       - name: Build rust
         run: python3 src/tools/rust/build_rust.py --build-bindgen --skip-test

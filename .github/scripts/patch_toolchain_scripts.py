@@ -54,6 +54,16 @@ def main():
             "        '--host-cc=' + os.environ['HOST_CC'],\n"
             "        '--host-cxx=' + os.environ['HOST_CXX'],\n",
         )
+        # The prebuilt OpenSSL 1.1.1 from CIPD is older than what curl-sys
+        # in cargo needs; use the OpenSSL 3 that chromium-toolchain.yml
+        # builds from source against the same Debian sysroot.
+        patch(
+            os.path.join(src, 'tools/rust/build_rust.py'),
+            'def AddOpenSSLToEnv():\n',
+            'def AddOpenSSLToEnv():\n'
+            "    os.environ['OPENSSL_DIR'] = os.environ['OWN_OPENSSL_DIR']\n\n\n"
+            'def _UnusedAddOpenSSLToEnv():\n',
+        )
 
 
 if __name__ == '__main__':
