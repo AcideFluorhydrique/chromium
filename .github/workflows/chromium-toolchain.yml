@@ -32,7 +32,7 @@ jobs:
       - name: Host compiler
         run: |
           need=""
-          for p in clang-18 lld-18 llvm-18 ninja-build; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
+          for p in clang-18 lld-18 llvm-18; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
           if [ -n "$need" ]; then
             for i in 1 2 3 4 5; do
               sudo apt-get update -q -o Acquire::Retries=5 && \
@@ -53,6 +53,15 @@ jobs:
           git fetch -q --depth 1 origin "refs/tags/$VERSION"
           git checkout -q FETCH_HEAD
           grep -E "^CLANG_(SUB_)?REVISION" tools/clang/scripts/update.py
+
+      # 不用 apt 的 ninja-build，照 DEPS 指定的版本從原始碼編
+      - name: Build ninja
+        run: |
+          v=$(grep -oP "'ninja_version': 'version:[0-9]+@\K[0-9]+\.[0-9]+\.[0-9]+" src/DEPS)
+          git clone -q --depth 1 -b "v$v" https://github.com/ninja-build/ninja.git ninja-src
+          (cd ninja-src && CXX="$HOST_CXX" python3 configure.py --bootstrap)
+          sudo install -m755 ninja-src/ninja /usr/local/bin/ninja
+          ninja --version
 
       - name: Checkout ci scripts
         uses: actions/checkout@v4
@@ -116,7 +125,7 @@ jobs:
       - name: Host compiler
         run: |
           need=""
-          for p in clang-18 lld-18 llvm-18 ninja-build; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
+          for p in clang-18 lld-18 llvm-18; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
           if [ -n "$need" ]; then
             for i in 1 2 3 4 5; do
               sudo apt-get update -q -o Acquire::Retries=5 && \
@@ -135,6 +144,15 @@ jobs:
           git fetch -q --depth 1 origin "refs/tags/$VERSION"
           git checkout -q FETCH_HEAD
           grep -E "^RUST_(SUB_)?REVISION|^BINDGEN_REVISION|^CRUBIT_REVISION" tools/rust/update_rust.py
+
+      # 不用 apt 的 ninja-build，照 DEPS 指定的版本從原始碼編
+      - name: Build ninja
+        run: |
+          v=$(grep -oP "'ninja_version': 'version:[0-9]+@\K[0-9]+\.[0-9]+\.[0-9]+" src/DEPS)
+          git clone -q --depth 1 -b "v$v" https://github.com/ninja-build/ninja.git ninja-src
+          (cd ninja-src && CXX="$HOST_CXX" python3 configure.py --bootstrap)
+          sudo install -m755 ninja-src/ninja /usr/local/bin/ninja
+          ninja --version
 
       - name: Checkout ci scripts
         uses: actions/checkout@v4
