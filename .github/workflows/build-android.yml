@@ -32,6 +32,11 @@ on:
         required: false
         default: false
         type: boolean
+      own_toolchain:
+        description: "clang / rust / gn / ninja / node 自己從原始碼編，不用 Google 預編譯的（實驗中，多 4–5 小時）"
+        required: false
+        default: false
+        type: boolean
   # 讓 release-chromium.yml 可以直接呼叫
   workflow_call:
     inputs:
@@ -45,6 +50,9 @@ on:
         type: string
         default: "org.chromium.chrome"
       official:
+        type: boolean
+        default: false
+      own_toolchain:
         type: boolean
         default: false
 
@@ -72,8 +80,16 @@ jobs:
           echo "Chromium $v ($PACKAGE_NAME)"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-  stage1:
+  toolchain:
     needs: resolve
+    if: inputs.own_toolchain
+    uses: ./.github/workflows/chromium-toolchain.yml
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+
+  stage1:
+    needs: [resolve, toolchain]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (needs.toolchain.result == 'success' || needs.toolchain.result == 'skipped') }}
     uses: ./.github/workflows/chromium-android-stage.yml
     with:
       stage: 1
@@ -81,6 +97,7 @@ jobs:
       target_cpu: ${{ inputs.target_cpu }}
       package_name: ${{ inputs.package_name }}
       official: ${{ inputs.official || false }}
+      own_toolchain: ${{ inputs.own_toolchain || false }}
 
   stage2:
     needs: [resolve, stage1]

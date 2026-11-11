@@ -1,0 +1,243 @@
+name: Chromium toolchain from source
+
+# 不用 Google 預編譯的 clang / rust / gn / ninja / node，改成自己從原始碼編，
+# 編好的東西上傳成 artifact，給 chromium-android-stage.yml 的 stage 1 換掉 Google 的版本。
+# 起點用 Ubuntu 套件的 clang-18 / lld-18 / gcc，和 Rust 官方的 stage0 rustc（Rust 本身只能這樣 bootstrap）。
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+env:
+  VERSION: ${{ inputs.version }}
+  HOST_CC: /usr/lib/llvm-18/bin/clang
+  HOST_CXX: /usr/lib/llvm-18/bin/clang++
+
+jobs:
+  clang:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Maximize disk space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 20480
+          swap-size-mb: 4096
+          remove-dotnet: "true"
+          # 要用 runner 上用 sdkmanager 裝好的 NDK 編 Android 的 compiler-rt
+          remove-android: "false"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Move temp to build volume
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.tmp"
+          sudo chmod 1777 "$GITHUB_WORKSPACE/.tmp"
+          sudo mount --bind "$GITHUB_WORKSPACE/.tmp" /tmp
+
+      - name: Host compiler
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clang-18 lld-18 llvm-18 ninja-build
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+          /usr/lib/llvm-18/bin/clang --version
+          cmake --version
+
+      - name: Fetch chromium/src at tag
+        run: |
+          git init -q src
+          cd src
+          git remote add origin https://chromium.googlesource.com/chromium/src.git
+          git fetch -q --depth 1 origin "refs/tags/$VERSION"
+          git checkout -q FETCH_HEAD
+          grep -E "^CLANG_(SUB_)?REVISION" tools/clang/scripts/update.py
+
+      - name: Checkout ci scripts
+        uses: actions/checkout@v4
+        with:
+          path: ci
+          sparse-checkout: .github/scripts
+
+      - name: Patch build scripts to refuse prebuilt downloads
+        run: python3 ci/.github/scripts/patch_toolchain_scripts.py src
+
+      - name: Link NDK
+        run: |
+          test -d "$ANDROID_NDK_LATEST_HOME"
+          echo "NDK: $ANDROID_NDK_LATEST_HOME"
+          mkdir -p src/third_party/android_toolchain
+          ln -s "$ANDROID_NDK_LATEST_HOME" src/third_party/android_toolchain/ndk
+
+      - name: Build clang
+        run: |
+          python3 src/tools/clang/scripts/build.py \
+            --disable-asserts \
+            --host-cc="$HOST_CC" --host-cxx="$HOST_CXX" \
+            --use-system-cmake \
+            --without-fuchsia \
+            --with-android \
+            --with-ml-inliner-model=
+
+      - name: Pack clang
+        run: |
+          d=src/third_party/llvm-build/Release+Asserts
+          cat "$d/cr_build_revision"
+          "$d/bin/clang" --version
+          mkdir -p pkg
+          tar -C src -cf - \
+            "third_party/llvm-build/Release+Asserts/bin" \
+            "third_party/llvm-build/Release+Asserts/lib/clang" \
+            "third_party/llvm-build/Release+Asserts/cr_build_revision" \
+            | zstd -T0 -6 > pkg/clang.tar.zst
+          ls -lh pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromium-tc-clang
+          path: pkg/
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: error
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Maximize disk space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 20480
+          swap-size-mb: 4096
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Move temp to build volume
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.tmp"
+          sudo chmod 1777 "$GITHUB_WORKSPACE/.tmp"
+          sudo mount --bind "$GITHUB_WORKSPACE/.tmp" /tmp
+
+      - name: Host compiler
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clang-18 lld-18 llvm-18 ninja-build
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+
+      - name: Fetch chromium/src at tag
+        run: |
+          git init -q src
+          cd src
+          git remote add origin https://chromium.googlesource.com/chromium/src.git
+          git fetch -q --depth 1 origin "refs/tags/$VERSION"
+          git checkout -q FETCH_HEAD
+          grep -E "^RUST_(SUB_)?REVISION|^BINDGEN_REVISION|^CRUBIT_REVISION" tools/rust/update_rust.py
+
+      - name: Checkout ci scripts
+        uses: actions/checkout@v4
+        with:
+          path: ci
+          sparse-checkout: .github/scripts
+
+      - name: Patch build scripts to refuse prebuilt downloads
+        run: python3 ci/.github/scripts/patch_toolchain_scripts.py src --rust
+
+      # 照 tools/rust/package_rust.py 的做法，但不編 crubit（Android 版用不到）、不跑測試
+      - name: Build rust
+        run: python3 src/tools/rust/build_rust.py --build-bindgen --skip-test
+
+      - name: Pack rust
+        run: |
+          d=src/third_party/rust-toolchain
+          cat "$d/VERSION"
+          for f in "$d"/bin/*; do [ -L "$f" ] || strip "$f" || true; done
+          "$d/bin/rustc" -vV
+          mkdir -p pkg
+          tar -C src -cf - third_party/rust-toolchain | zstd -T0 -6 > pkg/rust.tar.zst
+          ls -lh pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromium-tc-rust
+          path: pkg/
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: error
+
+  tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Host compiler
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clang-18 lld-18 llvm-18
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+
+      - name: Read pinned versions
+        run: |
+          base="https://chromium.googlesource.com/chromium/src/+/refs/tags/$VERSION"
+          curl -fsSL "$base/DEPS?format=TEXT" | base64 -d > DEPS
+          curl -fsSL "$base/third_party/node/update_node_binaries?format=TEXT" | base64 -d > update_node_binaries
+          gn_rev=$(grep -oP "'gn_version': 'git_revision:\K[0-9a-f]+" DEPS)
+          ninja_ver=$(grep -oP "'ninja_version': 'version:[0-9]+@\K[0-9]+\.[0-9]+\.[0-9]+" DEPS)
+          node_ver=$(grep -oP '^NODE_VERSION="\Kv[0-9.]+' update_node_binaries)
+          echo "gn $gn_rev / ninja $ninja_ver / node $node_ver"
+          test -n "$gn_rev" && test -n "$ninja_ver" && test -n "$node_ver"
+          {
+            echo "GN_REV=$gn_rev"
+            echo "NINJA_VER=$ninja_ver"
+            echo "NODE_VER=$node_ver"
+          } >> "$GITHUB_ENV"
+
+      - name: Build ninja
+        run: |
+          git clone -q --depth 1 -b "v$NINJA_VER" https://github.com/ninja-build/ninja.git ninja-src
+          cd ninja-src
+          CXX="$HOST_CXX" python3 configure.py --bootstrap
+          ./ninja --version
+          install -D -m755 ninja "$GITHUB_WORKSPACE/out/third_party/ninja/ninja"
+
+      - name: Build gn
+        run: |
+          git clone -q https://gn.googlesource.com/gn gn-src
+          cd gn-src
+          git checkout -q "$GN_REV"
+          CC="$HOST_CC" CXX="$HOST_CXX" AR=llvm-ar python3 build/gen.py
+          "$GITHUB_WORKSPACE/out/third_party/ninja/ninja" -C out gn
+          out/gn --version
+          install -D -m755 out/gn "$GITHUB_WORKSPACE/out/buildtools/linux64/gn"
+
+      - name: Build node
+        run: |
+          curl -fsSL "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER.tar.gz" | tar -xz
+          cd "node-$NODE_VER"
+          prefix="$GITHUB_WORKSPACE/out/third_party/node/linux/node-linux-x64"
+          ./configure --prefix="$prefix"
+          make -j"$(nproc)" install
+          # 和 Chromium 的 update_node_binaries 一樣拿掉 corepack
+          rm -f "$prefix/bin/corepack"
+          "$prefix/bin/node" --version
+
+      - name: Pack tools
+        run: |
+          mkdir -p pkg
+          tar -C out -cf - . | zstd -T0 -6 > pkg/tools.tar.zst
+          ls -lh pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromium-tc-tools
+          path: pkg/
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: error

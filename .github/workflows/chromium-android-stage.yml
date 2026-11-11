@@ -21,6 +21,9 @@ on:
       official:
         type: boolean
         default: false
+      own_toolchain:
+        type: boolean
+        default: false
     outputs:
       done:
         value: ${{ jobs.build.outputs.done }}
@@ -40,6 +43,7 @@ jobs:
       TARGET_CPU: ${{ inputs.target_cpu }}
       PACKAGE_NAME: ${{ inputs.package_name }}
       OFFICIAL: ${{ inputs.official }}
+      OWN_TOOLCHAIN: ${{ inputs.own_toolchain }}
       # job 開始後第幾分鐘一定要停 ninja（6 小時上限，扣掉打包、上傳的時間）
       NINJA_DEADLINE_MIN: 320
 
@@ -87,6 +91,13 @@ jobs:
       - name: Show disk
         run: df -h
 
+      - name: Checkout ci scripts
+        if: inputs.stage == 1 && inputs.own_toolchain
+        uses: actions/checkout@v4
+        with:
+          path: ci
+          sparse-checkout: .github/scripts
+
       # ---------- stage 1：抓原始碼 ----------
 
       - name: Get depot_tools
@@ -127,6 +138,19 @@ jobs:
           GCLIENT
           gclient sync --no-history -j 8
           du -sh src
+
+      # chromium-toolchain.yml 自己從原始碼編的 clang / rust / gn / ninja / node
+      - name: Download own toolchain
+        if: inputs.stage == 1 && inputs.own_toolchain
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chromium-tc-*
+          path: tc
+          merge-multiple: true
+
+      - name: Swap in own toolchain
+        if: inputs.stage == 1 && inputs.own_toolchain
+        run: python3 ci/.github/scripts/swap_toolchain.py src tc
 
       - name: gn gen
         if: inputs.stage == 1
@@ -275,6 +299,14 @@ jobs:
       - name: List APKs
         if: steps.build.outputs.done == 'true'
         run: ls -lh src/out/Default/apks/
+
+      - name: Show compiler of libchrome.so
+        if: steps.build.outputs.done == 'true'
+        run: |
+          f=src/out/Default/lib.unstripped/libchrome.so
+          [ -f "$f" ] || f=src/out/Default/libchrome.so
+          readelf -p .comment "$f" || true
+          [ -f src/toolchain-report.md ] && cat src/toolchain-report.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload APK
         if: steps.build.outputs.done == 'true'
