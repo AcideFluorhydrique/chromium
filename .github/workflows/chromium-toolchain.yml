@@ -31,8 +31,16 @@ jobs:
           df -h /
       - name: Host compiler
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q clang-18 lld-18 llvm-18 ninja-build
+          need=""
+          for p in clang-18 lld-18 llvm-18 ninja-build; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
+          if [ -n "$need" ]; then
+            for i in 1 2 3 4 5; do
+              sudo apt-get update -q -o Acquire::Retries=5 && \
+                sudo apt-get install -y -q -o Acquire::Retries=5 $need && break
+              echo "apt 失敗，60 秒後重試 ($i/5)"; sleep 60
+            done
+            for p in $need; do dpkg -s "$p" > /dev/null; done
+          fi
           echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
           /usr/lib/llvm-18/bin/clang --version
           cmake --version
@@ -107,8 +115,16 @@ jobs:
           df -h /
       - name: Host compiler
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q clang-18 lld-18 llvm-18 ninja-build
+          need=""
+          for p in clang-18 lld-18 llvm-18 ninja-build; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
+          if [ -n "$need" ]; then
+            for i in 1 2 3 4 5; do
+              sudo apt-get update -q -o Acquire::Retries=5 && \
+                sudo apt-get install -y -q -o Acquire::Retries=5 $need && break
+              echo "apt 失敗，60 秒後重試 ($i/5)"; sleep 60
+            done
+            for p in $need; do dpkg -s "$p" > /dev/null; done
+          fi
           echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
 
       - name: Fetch chromium/src at tag
@@ -158,8 +174,16 @@ jobs:
     steps:
       - name: Host compiler
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q clang-18 lld-18 llvm-18
+          need=""
+          for p in clang-18 lld-18 llvm-18; do dpkg -s "$p" > /dev/null 2>&1 || need="$need $p"; done
+          if [ -n "$need" ]; then
+            for i in 1 2 3 4 5; do
+              sudo apt-get update -q -o Acquire::Retries=5 && \
+                sudo apt-get install -y -q -o Acquire::Retries=5 $need && break
+              echo "apt 失敗，60 秒後重試 ($i/5)"; sleep 60
+            done
+            for p in $need; do dpkg -s "$p" > /dev/null; done
+          fi
           echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
 
       - name: Read pinned versions
@@ -192,7 +216,9 @@ jobs:
           cd gn-src
           git checkout -q "$GN_REV"
           # gn 用到 C++23 的 std::expected，clang-18 配 Ubuntu 的 libstdc++ 用不了，改用 gcc-13
-          CC=gcc CXX=g++ AR=ar python3 build/gen.py
+          extra=""
+          python3 build/gen.py --help | grep -q -- --allow-warnings && extra=--allow-warnings
+          CC=gcc CXX=g++ AR=ar CXXFLAGS=-Wno-comment python3 build/gen.py $extra
           "$GITHUB_WORKSPACE/out/third_party/ninja/ninja" -C out gn
           out/gn --version
           install -D -m755 out/gn "$GITHUB_WORKSPACE/out/buildtools/linux64/gn"
