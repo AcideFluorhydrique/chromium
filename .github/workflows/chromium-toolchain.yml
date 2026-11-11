@@ -167,7 +167,8 @@ jobs:
       # 改成對同一個 Debian sysroot 從原始碼編 OpenSSL 3
       - name: Build OpenSSL
         run: |
-          sr=$(cd src/tools/clang/scripts && python3 -c "from build import DownloadDebianSysroot; print(DownloadDebianSysroot('amd64'))")
+          sr=$(cd src/tools/clang/scripts && python3 -c "from build import DownloadDebianSysroot; print(DownloadDebianSysroot('amd64'))" | tail -n1)
+          test -d "$sr"
           echo "sysroot: $sr"
           git clone -q --depth 1 -b openssl-3.5.0 https://github.com/openssl/openssl.git openssl-src
           cd openssl-src
