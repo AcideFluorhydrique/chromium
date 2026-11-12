@@ -95,16 +95,6 @@ jobs:
             echo "CIPD_CACHE_DIR=$GITHUB_WORKSPACE/.cache/cipd"
           } >> "$GITHUB_ENV"
 
-      # 官方編譯的 ThinLTO 連結 libchrome.so 約需 20GB 記憶體，runner 只有 16GB，在大卷上補一個 16GB swap
-      - name: Extra swap for ThinLTO link
-        if: inputs.official
-        run: |
-          sudo fallocate -l 16G "$GITHUB_WORKSPACE/.swapfile"
-          sudo chmod 600 "$GITHUB_WORKSPACE/.swapfile"
-          sudo mkswap "$GITHUB_WORKSPACE/.swapfile"
-          sudo swapon "$GITHUB_WORKSPACE/.swapfile"
-          free -h
-
       - name: Show disk
         run: df -h
 
@@ -224,9 +214,10 @@ jobs:
       - name: Restore
         if: inputs.stage > 1
         run: |
-          cat pkg-src/src.tar.zst.* | zstd -d -T0 | tar -xf -
+          # 邊解壓邊刪掉讀完的分片，不然壓縮檔（約 17GB）和解開的原始碼會同時佔著磁碟
+          for f in pkg-src/src.tar.zst.*; do cat "$f"; rm "$f"; done | zstd -d -T0 | tar -xf -
           rm -rf pkg-src
-          cat pkg-out/out.tar.zst.* | zstd -d -T0 | tar -xf -
+          for f in pkg-out/out.tar.zst.*; do cat "$f"; rm "$f"; done | zstd -d -T0 | tar -xf -
           rm -rf pkg-out
           df -h .
 
@@ -235,6 +226,19 @@ jobs:
         run: sudo src/build/install-build-deps.sh --android --no-prompt --no-chromeos-fonts --no-syms --no-arm --no-nacl
 
       # ---------- 編譯 ----------
+
+      # 官方編譯的 ThinLTO 連結 libchrome.so 約需 20GB 記憶體，runner 只有 16GB，補一個 16GB swap。
+      # 放在還原之後才建，還原時磁碟最吃緊
+      - name: Extra swap for ThinLTO link
+        if: inputs.official
+        run: |
+          sudo fallocate -l 16G "$GITHUB_WORKSPACE/.swapfile"
+          sudo chmod 600 "$GITHUB_WORKSPACE/.swapfile"
+          sudo mkswap "$GITHUB_WORKSPACE/.swapfile"
+          sudo swapon "$GITHUB_WORKSPACE/.swapfile"
+          free -h
+          df -h .
+
 
       - name: Build chrome_public_apk
         id: build
