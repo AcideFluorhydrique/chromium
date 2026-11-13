@@ -1,9 +1,12 @@
 name: Release Chromium
 
-# 每週檢查一次最新的 Android Stable 版本，這個 repo 還沒有對應的 GitHub Release 就跑接力編譯並發 Release。
-# Stable 幾乎每週都有小版本，一次編譯約 12 小時，所以每週最多一版。
-# 簽名用 Chromium 原始碼內建的公開 debug 金鑰、包名 org.chromium.chrome（和 uazo 的 Vanilla Chromium 相同），
-# 每一版都能直接覆蓋更新。
+# Check weekly for the latest Android Stable version; if this repo doesn't have
+# a corresponding GitHub Release yet, run the relay build and publish a Release.
+# Stable has minor releases almost every week, and a single build takes about
+# 12 hours, so build at most once per week.
+# Signed with the public debug key built into the Chromium source code, package
+# name org.chromium.chrome (same as uazo's Vanilla Chromium), allowing direct
+# in-place updates for every release.
 
 on:
   schedule:
@@ -11,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "已經有同版本的 Release 也重新編譯（會覆蓋同名檔案）"
+        description: "Rebuild even if a Release for the same version already exists (will overwrite existing files)"
         required: false
         default: false
         type: boolean
@@ -37,20 +40,20 @@ jobs:
         run: |
           version=$(curl -fsSL "https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Android&num=1" | jq -r '.[0].version')
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "版本格式不對: '$version'"; exit 1
+            echo "Invalid version format: '$version'"; exit 1
           fi
-          echo "最新 Android Stable: $version"
+          echo "Latest Android Stable: $version"
           newest=$(gh release list -R "$GITHUB_REPOSITORY" --limit 100 --json tagName -q '.[].tagName' \
             | sed 's/^v//' | sort -V | tail -1)
           build=true
           if [ "$FORCE" = "true" ]; then
-            echo "force：強制重新編譯"
+            echo "force: Forcing rebuild"
           elif gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            build=false; echo "v$version 已存在"
+            build=false; echo "v$version already exists"
           elif [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$version" "$newest" | sort -V | tail -1)" != "$version" ]; then
-            build=false; echo "已經有更新的 v$newest，不回頭編舊版"
+            build=false; echo "Newer version v$newest already exists; skipping older version"
           fi
-          echo "要編譯: $build"
+          echo "Should build: $build"
           {
             echo "version=$version"
             echo "build=$build"
@@ -64,7 +67,7 @@ jobs:
       version: ${{ needs.check.outputs.version }}
       target_cpu: arm64
       package_name: org.chromium.chrome
-      # is_official_build：APK 約 295MB（非 official 約 513MB），一樣三棒約 12 小時
+      # is_official_build: APK is ~295MB (non-official is ~513MB); takes ~12 hours across 3 relay jobs either way
       official: true
 
   publish:
@@ -86,10 +89,18 @@ jobs:
           cp "$(find dist -name '*.apk' | head -1)" "release/chromium-$VERSION-android-arm64.apk"
           ls -lh release
           tag="v$VERSION"
-          notes="Chromium $VERSION（Android Stable）原始碼編譯，未修改。
-
-          - arm64，包名 org.chromium.chrome
-          - 用 Chromium 原始碼內建的公開 debug 金鑰簽名（SHA-256 32a2fc74d731105859e5a85df16d95f102d85b22099b8064c5d8915c61dad1e0），每一版都能直接覆蓋更新"
+          notes=$(printf '%s\n' \
+            "Built from unmodified Chromium $VERSION (Android Stable) source code." \
+            "" \
+            "- arm64, package name org.chromium.chrome" \
+            "- Signed with the public debug key built into the Chromium source code (SHA-256 32a2fc74d731105859e5a85df16d95f102d85b22099b8064c5d8915c61dad1e0), allowing direct in-place updates for every release" \
+            "" \
+            "---" \
+            "" \
+            "Chromium $VERSION（Android Stable）原始碼編譯，未修改。" \
+            "" \
+            "- arm64，包名 org.chromium.chrome" \
+            "- 用 Chromium 原始碼內建的公開 debug 金鑰簽名（SHA-256 32a2fc74d731105859e5a85df16d95f102d85b22099b8064c5d8915c61dad1e0），每一版都能直接覆蓋更新")
           if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber -R "$GITHUB_REPOSITORY"
           else
